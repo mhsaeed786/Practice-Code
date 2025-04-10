@@ -1,0 +1,278 @@
+import ollama
+import requests
+from bs4 import BeautifulSoup
+from colorama import Fore, Style
+import trafilatura
+import pandas as pd
+import time
+
+# --- Load existing functions and messages ---
+assistant_msg = {
+    'role': 'system',
+    'content': (
+        'You are an AI assistant that has another AI model working to get you live data from search '
+        'engine results that will be attached before a USER PROMPT . You must analyze the SEARCH RESULT '
+        'and use any relevant data to generate the most useful & intelligent response an AI assistant '
+        'that always impresses the user would generate . '
+    )
+}
+
+search_or_not_msg = (
+    ' You are not an AI assistant . Your only task is to decide if the last user prompt in a conversation '
+    ' with an AI assistant requires more data to be retrieved from a searching Google for the assistant '
+    ' to respond correctly . The conversation may or may not already have exactly the context data needed .'
+    ' If the assistant should search google for more data before responding to ensure a correct response ,'
+    ' simply respond " True " . If the conversation already has the context , or a Google search is not what an'
+    ' intelligent human would do to respond correctly to the last message in the convo , respond " False " .'
+    ' Do not generate any explanations . Only generate " True " or " False " as a response in this conversation'
+    ' using the logic in these instructions . '
+)
+
+query_msg = ( ' You are not an AI assistant that responds to a user . You are an AI web search query generator model . '
+              ' You will be given a prompt to an AI assistant with web search capabilities . If you are being used , an '
+              ' AI has determined this prompt to the actual AI assistant , requires web search for more recent data . '
+              ' You must determine what the data is the assistant needs from search and generate the best possible '
+              ' DuckDuckGo query to find that data . Do not respond with anything but a query that an expert human '
+              ' search engine user would type into DuckDuckGo to find the needed data . Keep your queries simple , '
+              ' without any search engine code . Just type a query likely to retrieve the data we need . '
+)
+
+best_search_msg = ( ' You are not an AI assistant that responds to a user . You are an AI model trained to select the best '
+                    ' search result out of a list of ten results . The best search result is the link an expert human search '
+                    ' engine user would click first to find the data to respond to a USER_PROMPT after searching DuckDuckGo '
+                    ' for the SEARCH_QUERY . \ nAll user messages you receive in this conversation will have the format of : \ n '
+                    'SEARCH_RESULTS : [ { } , { } , { } ] \ n '
+                    'USER_PROMPT : " this will be an actual prompt to a web search enabled AI assistant " \ n '
+                    'SEARCH_QUERY : " search query ran to get the above 10 links " \ n \ n '
+                    ' You must select the index from the 0 indexed SEARCH_RESULTS list and only respond with the index of '
+                    ' the best search result to check for the data the AI assistant needs to respond . That means your responses '
+                    ' to this conversation should always be 1 token , being and integer between 0-9 . '
+)
+contains_data_msg = ( ' You are not an AI assistant that responds to a user . You are an AI model designed to analyze data scraped '
+                      ' from a web pages text to assist an actual AI assistant in responding correctly with up to date information . '
+                      ' Consider the USER_PROMPT that was sent to the actual AI assistant & analyze the web PAGE TEXT to see if '
+                      ' it does contain the data needed to construct an intelligent , correct response . This web PAGE_TEXT was '
+                      ' retrieved from a search engine using the SEARCH_QUERY that is also attached to user messages in this '
+                      ' conversation . All user messages in this conversation will have the format of : \ n '
+
+                                                'PAGE_TEXT : " entire page text from the best search result based off the search snippet . " \ n '
+                                                'USER_PROMPT : " the prompt sent to an actual web search enabled AI assistant . " \ n '
+
+                      'SEARCH_QUERY : " the search query that was used to find data determined necessary for the assistant to '
+                      'respond correctly and usefully . " \ n '
+
+                      ' You must determine whether the PAGE_TEXT actually contains reliable and necessary data for the AI assistant '
+                      ' to respond . You only have two possible responses to user messages in this conversation : " True " or " False " . '
+                      ' You never generate more than one token and it is always either " True " or " False " with True indicating that '
+                      ' page text does indeed contain the reliable data for the AI assistant to use as context to respond . Respond '
+                      '" False " if the PAGE TEXT is not useful to answering the USER PROMPT . '
+)
+
+assistant_convo = [assistant_msg]
+
+def search_or_not():
+    sys_msg = search_or_not_msg
+    response = ollama.chat(
+        model='llama3.1:8b',
+        messages=[{'role': 'system', 'content': sys_msg}, assistant_convo[-1]]
+    )
+    content = response['message']['content']
+    if 'true' in content.lower():
+        return True
+    else:
+        return False
+
+def query_generator(prompt):
+    sys_msg = query_msg
+    local_query_msg = f'CREATE A SEARCH QUERY TO FIND THE FOUNDER NAME, CONTACT EMAIL, AND PRODUCT DESCRIPTION FOR THIS COMPANY: {prompt}'
+    response = ollama.chat(
+        model='llama3.1:8b',
+        messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': local_query_msg}]
+    )
+    return response['message']['content']
+
+def duckduckgo_search(query):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
+    }
+    url = f'https://html.duckduckgo.com/html/?q={query}'
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        results = []
+        for i, result in enumerate(soup.find_all('div', class_='result'), start=1):
+            if i > 5:  # Limiting to top 5 results for faster processing
+                break
+            title_tag = result.find('a', class_='result__a')
+            if not title_tag:
+                continue
+            link = title_tag['href']
+            snippet_tag = result.find('a', class_='result__snippet')
+            snippet = snippet_tag.text.strip() if snippet_tag else 'No description available'
+            results.append({'id': i, 'link': link, 'search_description': snippet})
+        return results
+    except requests.exceptions.RequestException as e:
+        print(f"Error during search: {e}")
+        return []
+
+def scrape_webpage(url):
+    try:
+        downloaded = trafilatura.fetch_url(url=url)
+        return trafilatura.extract(downloaded, include_formatting=True, include_links=True, favor_precision=True)
+    except Exception as e:
+        print(f"Error scraping {url}: {e}")
+        return None
+
+def extract_information(company_name, search_results):
+    founder_name = None
+    contact_email = None
+    product_description = None
+
+    for result in search_results:
+        link = result['link']
+        page_text = scrape_webpage(link)
+        if page_text:
+            # Basic keyword search for information - can be improved with more sophisticated NLP
+            if not founder_name and ("founder" in page_text.lower() or "ceo" in page_text.lower()):
+                # Simple heuristic - might need more advanced extraction
+                sentences = page_text.split('.')
+                for sentence in sentences:
+                    if "founder" in sentence.lower() or "ceo" in sentence.lower():
+                        # Further simple heuristics
+                        if company_name in sentence:
+                            continue # Avoid extracting the company name as founder
+                        potential_name = sentence.split("founder")[0].split()[-2:]
+                        if potential_name:
+                            founder_name = " ".join(potential_name).strip()
+                            break
+                        potential_name = sentence.split("ceo")[0].split()[-2:]
+                        if potential_name:
+                            founder_name = " ".join(potential_name).strip()
+                            break
+
+            if not contact_email and ("contact" in page_text.lower() or "email" in page_text.lower()):
+                import re
+                email_matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", page_text)
+                if email_matches:
+                    contact_email = email_matches[0]
+
+            if not product_description and ("product" in page_text.lower() or "service" in page_text.lower() or "we offer" in page_text.lower()):
+                # More sophisticated extraction needed for good product description
+                sentences = page_text.split('.')
+                for sentence in sentences:
+                    if "product" in sentence.lower() or "service" in sentence.lower() or "we offer" in sentence.lower():
+                        if len(sentence.split()) > 10 and len(sentence.split()) < 50: # Basic length filter
+                            product_description = sentence.strip()
+                            break
+                if not product_description and len(page_text.split()) > 50:
+                    # If no specific sentence found, take the first paragraph as a very rough description
+                    first_paragraph = page_text.split('\n')[0].strip()
+                    if len(first_paragraph.split()) > 10 and len(first_paragraph.split()) < 100:
+                        product_description = first_paragraph
+
+        if founder_name and contact_email and product_description:
+            break # Stop searching if we have all the info
+
+        time.sleep(1) # Be respectful to websites
+
+    return founder_name, contact_email, product_description
+
+def generate_campaign_mail(company_name, founder_first_name, product_description):
+    specific_detail = ""
+    if product_description:
+        # Try to extract a specific detail - this is a simplified approach
+        keywords = ["optimizing", "scaling", "enhancing", "improving", "developing", "integrating"]
+        for keyword in keywords:
+            if keyword in product_description.lower():
+                specific_detail = product_description.split(keyword)[0].split()[-3:]
+                specific_detail = keyword + " " + " ".join(specific_detail)
+                break
+        if not specific_detail:
+            specific_detail = product_description[:50] + "..." # Fallback
+
+    specific_goal = ""
+    if "AI" in product_description:
+        specific_goal = "accelerating your AI initiatives"
+    elif "web development" in product_description.lower() or "mobile development" in product_description.lower():
+        specific_goal = "enhancing your online presence and user engagement"
+    elif "automation" in product_description.lower():
+        specific_goal = "reducing operational costs and improving efficiency"
+    else:
+        specific_goal = "achieving your business objectives"
+
+    return f"""Hi {founder_first_name if founder_first_name else ''},
+
+I noticed that {company_name} is focused on {specific_detail}. At Xellex, we specialize in AI-powered automation, custom software development, and seamless integrations to help businesses like yours work smarter, not harder.
+
+Whether you need:
+
+* AI-driven automation to reduce manual work and improve efficiency,
+* Custom web and mobile applications built with the latest technologies,
+* Integration of tools like CRMs, ERPs, or cloud services,
+
+we’ve got you covered.
+
+Would you be open to a quick chat to explore how we can help {company_name} achieve {specific_goal}?
+
+Looking forward to your thoughts!
+
+Best regards,
+Team Xellex
+"""
+
+def main():
+    excel_file = r"C:\Users\dell\OneDrive\Documents\Clients list 2.xlsx"  # Use raw string to handle backslashes
+    try:
+        df = pd.read_excel(excel_file)
+        df.columns = df.columns.str.strip()
+    except FileNotFoundError:
+        print(f"Error: The file '{excel_file}' was not found.")
+        return
+
+    if 'Company Name' not in df.columns:
+        print("Error: The Excel file must contain a column named 'Company Name'.")
+        return
+
+    df['Founder Name'] = None
+    df['Contact Email'] = None
+    df['Product Description'] = None
+    df['Campaign Mail'] = None
+
+    for index, row in df.iterrows():
+        company_name = row['Company Name']
+        print(f"\n--- Processing: {company_name} ---")
+
+        search_query = f"{company_name} founder contact information product description"
+        search_results = duckduckgo_search(search_query)
+
+        if search_results:
+            founder_name, contact_email, product_description = extract_information(company_name, search_results)
+
+            df.loc[index, 'Founder Name'] = founder_name
+            df.loc[index, 'Contact Email'] = contact_email
+            df.loc[index, 'Product Description'] = product_description
+
+            if founder_name:
+                founder_first_name = founder_name.split(' ')[0] if ' ' in founder_name else founder_name
+            else:
+                founder_first_name = None
+
+            if product_description:
+                campaign_mail = generate_campaign_mail(company_name, founder_first_name, product_description)
+                df.loc[index, 'Campaign Mail'] = campaign_mail
+            else:
+                df.loc[index, 'Campaign Mail'] = "Could not generate campaign mail due to lack of product description."
+        else:
+            print(f"No search results found for {company_name}.")
+
+        time.sleep(5) # Adding a delay to be respectful to search engines
+
+    try:
+        df.to_excel("Clients list 2_processed.xlsx", index=False)
+        print("\n--- Processing complete. Results saved to 'Clients list 2_processed.xlsx' ---")
+    except Exception as e:
+        print(f"Error saving the processed Excel file: {e}")
+
+if __name__ == '__main__':
+    main()
