@@ -74,14 +74,11 @@ def search_or_not():
         messages=[{'role': 'system', 'content': sys_msg}, assistant_convo[-1]]
     )
     content = response['message']['content']
-    if 'true' in content.lower():
-        return True
-    else:
-        return False
+    return content.strip().lower() == 'true'
 
 def query_generator():
     sys_msg = query_msg  # Use the global variable query_msg
-    local_query_msg = f'CREATE A SEARCH QUERY FOR THIS PROMPT : \n {assistant_convo[-1]}'
+    local_query_msg = f'CREATE A SEARCH QUERY FOR THIS PROMPT : \n "{assistant_convo[-1]["content"]}"'
     response = ollama.chat(
         model='llama3.1:8b',
         messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': local_query_msg}]
@@ -116,7 +113,7 @@ def duckduckgo_search(query):
 
 def best_search_result(s_results, query):
     sys_msg = best_search_msg
-    best_msg = f'SEARCH_RESULTS : {s_results} \nUSER_PROMPT : {assistant_convo[-1]} \nSEARCH_QUERY : {query}'
+    best_msg = f'SEARCH_RESULTS : {s_results} \nUSER_PROMPT : "{assistant_convo[-1]["content"]}" \nSEARCH_QUERY : {query}'
 
     for _ in range(2):
         try:
@@ -186,7 +183,7 @@ def ai_search():
 def contains_data_needed(search_content, query):
 
     sys_msg = "Please analyze if this webpage content contains the information needed to answer the user's query. Only respond with 'true' or 'false'."
-    needed_prompt = f'PAGE_TEXT : {search_content} \nUSER_PROMPT : {assistant_convo[-1]} \nSEARCH_QUERY : {query}'
+    needed_prompt = f'PAGE_TEXT : {search_content} \nUSER_PROMPT : "{assistant_convo[-1]["content"]}" \nSEARCH_QUERY : {query}'
     response = ollama.chat(
         model='llama3.1:8b',
         messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': needed_prompt}]

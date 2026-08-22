@@ -2,6 +2,7 @@ import pandas as pd
 import ollama
 import time
 import requests
+from urllib.parse import quote
 from bs4 import BeautifulSoup
 
 # Constants
@@ -23,8 +24,8 @@ def duckduckgo_search(query):
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
     }
-    url = f"https://html.duckduckgo.com/html/?q={query}"
-    response = requests.get(url, headers=headers)
+    url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
+    response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -92,17 +93,16 @@ def update_excel_column_with_ollama_realtime(excel_filepath, column_name, fixed_
                 df.loc[index, column_name] = ollama_response
                 print(f"Updated row {index + 2} (Excel row number) of column '{column_name}'.")
 
-                # Save the updated DataFrame back to the Excel file in realtime
-                df.to_excel(excel_filepath, index=False)
-                print(f"Saved updated Excel file.")
-                time.sleep(1)  # Adding a small delay to observe the realtime update
+                time.sleep(1)  # Small delay between API calls
 
             except ollama.OllamaAPIError as e:
                 print(f"Error calling Ollama API for row {index + 2}: {e}")
             except Exception as e:
                 print(f"An unexpected error occurred for row {index + 2}: {e}")
 
-        print(f"\nSuccessfully updated column '{column_name}' in '{excel_filepath}' in realtime.")
+        # Save the updated workbook once after processing all rows
+        df.to_excel(excel_filepath, index=False)
+        print(f"\nSuccessfully updated column '{column_name}' in '{excel_filepath}'. Saved workbook.")
 
     except FileNotFoundError:
         print(f"Error: Excel file not found at '{excel_filepath}'.")

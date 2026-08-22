@@ -8,7 +8,7 @@ load_dotenv()
 
 # Email Configuration - Load from environment variables or set directly
 sender_email = "hassan.saeed.xellex@gmail.com"  # Your Gmail address - strongly recommend using environment variables
-sender_password ="wdvw izdk gujr grun"  # Your Gmail password - strongly recommend using environment variables
+sender_password = os.getenv("GMAIL_PASSWORD")  # Your Gmail app password, loaded from .env
 smtp_server = "smtp.gmail.com"
 port = 465  # For SSL
 
@@ -67,7 +67,7 @@ def main():
         return
 
     if "Full Name" not in df.columns or "Company Name" not in df.columns or "Email" not in df.columns:
-        print("Error: Excel file must contain columns named 'Contact Person Name', 'Hospital/Healthcare Organization Name', and 'Recipient Email'.")
+        print("Error: Excel file must contain columns named 'Full Name', 'Company Name', and 'Email'.")
         return
 
     for index, row in df.iterrows():
