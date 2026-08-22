@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 from colorama import  Fore, Style, Fore
 import trafilatura
+from scrape_common import build_messages, http_get, ollama_chat, quote_query
 
 assistant_msg = {
     'role': 'system',
@@ -68,30 +69,18 @@ contains_data_msg = (  ' You are not an AI assistant that responds to a user . Y
 
 assistant_convo = [assistant_msg]  # Corrected the spelling here
 def search_or_not():
-    sys_msg = search_or_not_msg
-    response = ollama.chat(
-        model='llama3.1:8b',
-        messages=[{'role': 'system', 'content': sys_msg}, assistant_convo[-1]]
-    )
-    content = response['message']['content']
-    return content.strip().lower() == 'true'
+    content = ollama_chat([{'role': 'system', 'content': search_or_not_msg}, assistant_convo[-1]])
+    return bool(content) and content.strip().lower() == 'true'
 
 def query_generator():
-    sys_msg = query_msg  # Use the global variable query_msg
     local_query_msg = f'CREATE A SEARCH QUERY FOR THIS PROMPT : \n "{assistant_convo[-1]["content"]}"'
-    response = ollama.chat(
-        model='llama3.1:8b',
-        messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': local_query_msg}]
-    )
-    return response['message']['content']
+    return ollama_chat(build_messages(query_msg, local_query_msg))
 
 def duckduckgo_search(query):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
-    }
-    url = f'https://html.duckduckgo.com/html/?q={query}'
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
+    url = f'https://html.duckduckgo.com/html/?q={quote_query(query)}'
+    response = http_get(url)
+    if response is None:
+        return []
     soup = BeautifulSoup(response.text, 'html.parser')
     results = []
     for i, result in enumerate(soup.find_all('div', class_='result'), start=1):
@@ -112,20 +101,14 @@ def duckduckgo_search(query):
     return results
 
 def best_search_result(s_results, query):
-    sys_msg = best_search_msg
     best_msg = f'SEARCH_RESULTS : {s_results} \nUSER_PROMPT : "{assistant_convo[-1]["content"]}" \nSEARCH_QUERY : {query}'
-
     for _ in range(2):
-        try:
-            response = ollama.chat(
-                model='llama3.1:8b',
-                messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': best_msg}]
-            )
-            result = int(response['message']['content'])
-            if result is not None:
-                return result
-        except:
-            continue
+        content = ollama_chat(build_messages(best_search_msg, best_msg))
+        if content is not None:
+            try:
+                return int(content)
+            except ValueError:
+                continue
     return 0
 def scrape_webpage(url):
     try:
@@ -184,12 +167,8 @@ def contains_data_needed(search_content, query):
 
     sys_msg = "Please analyze if this webpage content contains the information needed to answer the user's query. Only respond with 'true' or 'false'."
     needed_prompt = f'PAGE_TEXT : {search_content} \nUSER_PROMPT : "{assistant_convo[-1]["content"]}" \nSEARCH_QUERY : {query}'
-    response = ollama.chat(
-        model='llama3.1:8b',
-        messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': needed_prompt}]
-    )
-    content = response['message']['content']
-    if 'true' in content.lower():
+    content = ollama_chat(build_messages(sys_msg, needed_prompt))
+    if content is not None and 'true' in content.lower():
         print (f'{Fore.LIGHTRED_EX}' 'FOUND DATA .{Style.RESET_ALL} ' )
         return True   
           
@@ -204,7 +183,7 @@ def stream_assistant_response():
     complete_response = ''
     print('Assistant: ')
     for chunk in response_stream:
-        print(f'{Fore.WHITE}{chunk['message']['content']}{Style.RESET_ALL}', end='', flush=True)
+        print(f"{Fore.WHITE}{chunk['message']['content']}{Style.RESET_ALL}", end='', flush=True)
         complete_response += chunk['message']['content']
 
     assistant_convo.append({'role': 'assistant', 'content': complete_response})

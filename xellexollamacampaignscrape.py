@@ -6,6 +6,7 @@ from colorama import Fore, Style
 import trafilatura
 import pandas as pd
 import time
+from scrape_common import build_messages, http_get, ollama_chat, quote_query
 
 # --- Load existing functions and messages ---
 assistant_msg = {
@@ -72,34 +73,21 @@ contains_data_msg = ( ' You are not an AI assistant that responds to a user . Yo
 assistant_convo = [assistant_msg]
 
 def search_or_not():
-    sys_msg = search_or_not_msg
-    response = ollama.chat(
-        model='llama3.1:8b',
-        messages=[{'role': 'system', 'content': sys_msg}, assistant_convo[-1]]
-    )
-    content = response['message']['content']
-    if 'true' in content.lower():
-        return True
-    else:
+    content = ollama_chat([{'role': 'system', 'content': search_or_not_msg}, assistant_convo[-1]])
+    if content is None:
         return False
+    return 'true' in content.lower()
 
 def query_generator(prompt):
-    sys_msg = query_msg
     local_query_msg = f'CREATE A SEARCH QUERY TO FIND THE FOUNDER NAME, CONTACT EMAIL, AND PRODUCT DESCRIPTION FOR THIS COMPANY: {prompt}'
-    response = ollama.chat(
-        model='llama3.1:8b',
-        messages=[{'role': 'system', 'content': sys_msg}, {'role': 'user', 'content': local_query_msg}]
-    )
-    return response['message']['content']
+    return ollama_chat(build_messages(query_msg, local_query_msg))
 
 def duckduckgo_search(query):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36",
-    }
-    url = f'https://html.duckduckgo.com/html/?q={quote(query)}'
+    url = f'https://html.duckduckgo.com/html/?q={quote_query(query)}'
+    response = http_get(url)
+    if response is None:
+        return []
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         results = []
         for i, result in enumerate(soup.find_all('div', class_='result'), start=1):
