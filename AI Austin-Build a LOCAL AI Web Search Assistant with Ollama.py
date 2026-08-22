@@ -204,7 +204,7 @@ def stream_assistant_response():
     complete_response = ''
     print('Assistant: ')
     for chunk in response_stream:
-        print(f'{Fore.WHITE}{chunk['message']['content']}{Style.RESET_ALL}', end='', flush=True)
+        print(f"{Fore.WHITE}{chunk['message']['content']}{Style.RESET_ALL}", end='', flush=True)
         complete_response += chunk['message']['content']
 
     assistant_convo.append({'role': 'assistant', 'content': complete_response})
